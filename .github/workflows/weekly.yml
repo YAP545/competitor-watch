@@ -1,0 +1,72 @@
+name: Weekly Competitor Watch
+
+on:
+  schedule:
+    # Run every Monday at 09:00 UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Lookback window in days'
+        required: false
+        default: '7'
+      min_importance:
+        description: 'Minimum importance filter (1 to 5)'
+        required: false
+        default: '2'
+
+jobs:
+  watch:
+    name: Generate Intelligence Brief
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Restore monitoring state cache
+        uses: actions/cache@v4
+        with:
+          path: state
+          key: competitor-watch-state-${{ github.run_id }}
+          restore-keys: |
+            competitor-watch-state-
+
+      - name: Install dependencies (optional)
+        run: |
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+      - name: Run Competitor Watch
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          DAYS="${{ github.event.inputs.days || '7' }}"
+          MIN_IMP="${{ github.event.inputs.min_importance || '2' }}"
+          python competitor_watch.py --days "$DAYS" --min-importance "$MIN_IMP" --print
+
+      - name: Upload Intelligence Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: intelligence-reports
+          path: reports/
+          retention-days: 30
+
+      - name: Upload Page Watcher State
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: watcher-state
+          path: state/
+          retention-days: 30

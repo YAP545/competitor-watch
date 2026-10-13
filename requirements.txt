@@ -1,0 +1,5 @@
+# Competitor Watch Dependencies
+# Core application runs entirely on the Python Standard Library (no dependencies required for Gemini or heuristics).
+
+# Optional: Required only if using Anthropic Claude instead of Google Gemini
+anthropic>=0.18.0

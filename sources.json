@@ -1,0 +1,41 @@
+{
+  "_note": "Starter list - run `python competitor_watch.py --check-sources` to see which URLs work, then edit freely. 'feeds' = official RSS/Atom URLs. 'pages' = web pages to watch for changes (pricing, newsroom). Pages built entirely with JavaScript can't be watched this way.",
+  "OpenAI": {
+    "aliases": [],
+    "feeds": ["https://openai.com/news/rss.xml"],
+    "pages": [
+      {"url": "https://openai.com/api/pricing/", "label": "API pricing", "category": "pricing"}
+    ]
+  },
+  "Anthropic": {
+    "aliases": ["Claude"],
+    "feeds": [],
+    "pages": [
+      {"url": "https://www.anthropic.com/news", "label": "Newsroom", "category": "other"},
+      {"url": "https://claude.com/pricing", "label": "Claude pricing", "category": "pricing"}
+    ]
+  },
+  "Mistral AI": {
+    "aliases": ["Mistral"],
+    "feeds": [],
+    "pages": [
+      {"url": "https://mistral.ai/news", "label": "Newsroom", "category": "other"},
+      {"url": "https://mistral.ai/pricing", "label": "Pricing", "category": "pricing"}
+    ]
+  },
+  "Cohere": {
+    "aliases": [],
+    "feeds": [],
+    "pages": [
+      {"url": "https://cohere.com/blog", "label": "Blog", "category": "other"},
+      {"url": "https://cohere.com/pricing", "label": "Pricing", "category": "pricing"}
+    ]
+  },
+  "Perplexity": {
+    "aliases": [],
+    "feeds": [],
+    "pages": [
+      {"url": "https://www.perplexity.ai/hub", "label": "Blog", "category": "other"}
+    ]
+  }
+}

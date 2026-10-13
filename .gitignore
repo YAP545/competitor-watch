@@ -1,0 +1,42 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.env
+*.pem
+*.key
+*secret*
+*credential*
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Execution logs
+*.log
+run.log
+logs/
+
+# Local monitoring state (page-diff baselines)
+state/
+
+# Generated intelligence reports (HTML, Markdown, JSON)
+reports/
+
+# Operating system & editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
