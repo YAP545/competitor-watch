@@ -178,12 +178,30 @@ The project includes an automated GitHub Actions workflow at `.github/workflows/
 3. Add the following repository secrets:
    - `GEMINI_API_KEY`: Your Gemini API key.
    - `ANTHROPIC_API_KEY`: (Optional) Your Anthropic API key if using Claude.
-   - `SLACK_WEBHOOK_URL`: (Optional) Incoming webhook URL to post executive briefs to Slack.
-4. **Workflow Features**:
-   - **Weekly Schedule**: Executes every Monday at 09:00 UTC (`cron: '0 9 * * 1'`).
-   - **Manual Trigger**: Can be dispatched on-demand via the Actions tab with custom day and importance inputs.
-   - **Page Watcher State Caching**: Caches `state/` between runs so page change detection works across consecutive weeks.
-   - **Artifact Archiving**: Uploads generated reports and monitoring states as workflow artifacts retained for 30 days.
+### Manual Execution:
+You can trigger the GitHub Actions workflow at any time without waiting for the Monday cron schedule:
+
+**Via GitHub Web Interface:**
+1. Navigate to your repository on GitHub: `https://github.com/YAP545/competitor-watch`.
+2. Click the **Actions** tab at the top.
+3. In the left sidebar, select **Weekly Competitor Watch**.
+4. Click the **Run workflow** dropdown button on the right.
+5. (Optional) Customize the lookback window (default: `7` days) and minimum importance filter (default: `2`).
+6. Click **Run workflow**.
+
+**Via GitHub CLI (`gh`):**
+```powershell
+gh workflow run weekly.yml --repo YAP545/competitor-watch -f days=7 -f min_importance=2
+```
+
+---
+
+## Cloud Infrastructure & GCP Requirements
+
+**No Google Cloud Platform (GCP) or paid cloud infrastructure is required.**
+- The AI summarization pipeline connects directly to Google AI Studio's Gemini REST API via the Python Standard Library (`urllib.request`).
+- No Google Cloud Console project, BigQuery, Vertex AI, Google Cloud Storage, or GCP billing activation is required.
+- Everything runs either locally (via PowerShell / Task Scheduler) or in free GitHub Actions runner minutes.
 
 ---
 

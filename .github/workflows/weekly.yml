@@ -62,6 +62,7 @@ jobs:
           name: intelligence-reports
           path: reports/
           retention-days: 30
+          if-no-files-found: ignore
 
       - name: Upload Page Watcher State
         uses: actions/upload-artifact@v4
@@ -70,3 +71,4 @@ jobs:
           name: watcher-state
           path: state/
           retention-days: 30
+          if-no-files-found: ignore

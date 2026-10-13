@@ -1,7 +1,7 @@
 {
-  "_note": "Starter list - run `python competitor_watch.py --check-sources` to see which URLs work, then edit freely. 'feeds' = official RSS/Atom URLs. 'pages' = web pages to watch for changes (pricing, newsroom). Pages built entirely with JavaScript can't be watched this way.",
+  "_note": "Starter list - run `python competitor_watch.py --check-sources` to see which URLs work, then edit freely. 'feeds' = official RSS/Atom URLs. 'pages' = web pages to watch for changes (pricing, newsroom). Pages protected by Cloudflare/WAF or requiring client-side JavaScript execution cannot be diffed via standard HTTP.",
   "OpenAI": {
-    "aliases": [],
+    "aliases": ["ChatGPT"],
     "feeds": ["https://openai.com/news/rss.xml"],
     "pages": [
       {"url": "https://openai.com/api/pricing/", "label": "API pricing", "category": "pricing"}
@@ -35,7 +35,8 @@
     "aliases": [],
     "feeds": [],
     "pages": [
-      {"url": "https://www.perplexity.ai/hub", "label": "Blog", "category": "other"}
+      {"url": "https://status.perplexity.ai", "label": "Status", "category": "security_outage"},
+      {"url": "https://www.perplexity.ai/hub", "label": "Hub (JS-protected)", "category": "other"}
     ]
   }
 }

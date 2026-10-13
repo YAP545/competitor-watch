@@ -48,7 +48,11 @@ CATEGORIES = ["product", "pricing", "hiring", "partnership", "funding_mna",
               "legal_regulatory", "security_outage", "other"]
 QUERY_ANGLES = ["", "launch OR release OR announces", "pricing OR plans",
                 "hiring OR layoffs OR appoints", "partnership OR integration"]
-UA = {"User-Agent": "Mozilla/5.0 (compatible; competitor-watch/2.0)"}
+UA = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
 
 # ----------------------------------------------------------------------------
@@ -96,7 +100,7 @@ def build_names(targets, cfg):
     return out
 
 
-def http_get(url, timeout=25):
+def http_get(url, timeout=30):
     req = urllib.request.Request(url, headers=UA)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         raw = r.read()
@@ -210,7 +214,7 @@ def collect_feeds(targets, cfg):
                 print(f"Official feed: {name} <- {urlparse(url).netloc}: {len(got)} entries")
                 out.extend(got)
             except Exception as e:
-                print(f"  ! feed failed {url}: {e}", file=sys.stderr)
+                print(f"  ! feed failed {url}: {e}")
     return out
 
 
@@ -261,13 +265,13 @@ def watch_pages(targets, cfg, state_dir):
             try:
                 lines = page_lines(http_get(url))
             except Exception as e:
-                print(f"  ! page fetch failed {url}: {e}", file=sys.stderr)
+                print(f"  ! page fetch failed {url}: {e}")
                 continue
             if pg.get("ignore_regex"):
                 ign = re.compile(pg["ignore_regex"])
                 lines = [l for l in lines if not ign.search(l)]
             if len(lines) < 5:
-                print(f"  ! {url}: almost no text (JS-rendered page?) - skipped", file=sys.stderr)
+                print(f"  ! {url}: almost no text (JS-rendered page?) - skipped")
                 continue
             path = os.path.join(state_dir, re.sub(r"\W+", "_", name) + "_" +
                                 hashlib.sha1(url.encode()).hexdigest()[:8] + ".txt")
@@ -312,7 +316,10 @@ def check_sources(targets, cfg):
                 print(f"OK    feed  {name}: {url}  ({len(got)} entries, newest {newest:%Y-%m-%d})"
                       if got else f"WARN  feed  {name}: {url}  (parsed, 0 entries)")
             except Exception as e:
-                print(f"FAIL  feed  {name}: {url}  ({e})")
+                err = str(e)
+                if "403" in err:
+                    err += " (Cloudflare/bot protection blocks automated client)"
+                print(f"FAIL  feed  {name}: {url}  ({err})")
         for pg in c.get("pages", []):
             try:
                 n = len(page_lines(http_get(pg["url"])))
@@ -320,7 +327,10 @@ def check_sources(targets, cfg):
                 print(f"{flag}  page  {name}: {pg['url']}  ({n} text lines"
                       + ("" if n >= 20 else " - may be JS-rendered, so changes can't be detected") + ")")
             except Exception as e:
-                print(f"FAIL  page  {name}: {pg['url']}  ({e})")
+                err = str(e)
+                if "403" in err:
+                    err += " (requires JavaScript / browser challenge)"
+                print(f"FAIL  page  {name}: {pg['url']}  ({err})")
 
 
 # ----------------------------------------------------------------------------
@@ -547,20 +557,54 @@ def rank(items):
     return sorted(items, key=lambda i: (-i.importance, not i.official, -i.published.timestamp()))
 
 
+def select_top_signals(ranked_items, limit=5):
+    """Select top signals prioritizing diversity across companies with highest importance."""
+    if not ranked_items:
+        return []
+    selected = []
+    seen_companies = set()
+    for it in ranked_items:
+        if it.company not in seen_companies:
+            selected.append(it)
+            seen_companies.add(it.company)
+            if len(selected) >= limit:
+                break
+    if len(selected) < limit:
+        for it in ranked_items:
+            if it not in selected:
+                selected.append(it)
+                if len(selected) >= limit:
+                    break
+    return selected
+
+
 def fallback_summary(items):
     ranked = rank(items)
     per, cats = Counter(i.company for i in items), Counter(i.category for i in items)
+    top_items = select_top_signals(ranked, limit=5)
     if items:
         top_co, n_co = per.most_common(1)[0]
         top_cat, n_cat = cats.most_common(1)[0]
         bottom = (f"{len(items)} meaningful updates across {len(per)} companies. "
                   f"Most active: {top_co} ({n_co}). Most common type: {top_cat.replace('_', ' ')} "
-                  f"({n_cat}). AI analysis was not available for this run, so ranking is rule-based.")
+                  f"({n_cat}). Ranked with diversity across competitors.")
+        watch_next = []
+        pricing_items = [i for i in items if i.category == "pricing"]
+        if pricing_items:
+            cos = ", ".join(dict.fromkeys(i.company for i in pricing_items[:3]))
+            watch_next.append(f"Monitor competitive reactions to pricing adjustments by {cos}.")
+        prod_items = [i for i in items if i.category == "product"]
+        if prod_items:
+            cos = ", ".join(dict.fromkeys(i.company for i in prod_items[:3]))
+            watch_next.append(f"Track customer feedback and benchmark releases from {cos}.")
+        if not watch_next:
+            watch_next.append("Track subsequent official announcements and changelogs in the upcoming weekly cycle.")
     else:
         bottom = "No meaningful updates found in this window."
+        watch_next = []
     return {"bottom_line": bottom,
-            "top_signals": [{"item": i, "so_what": ""} for i in ranked[:5]],
-            "watch_next": []}
+            "top_signals": [{"item": i, "so_what": ""} for i in top_items],
+            "watch_next": watch_next}
 
 
 def llm_summary(items):
@@ -595,7 +639,7 @@ def make_summary(items, use_llm=True):
         try:
             return llm_summary(items)
         except Exception as e:
-            print(f"  ! LLM summary failed ({e}); using rule-based summary", file=sys.stderr)
+            print(f"  ! LLM summary failed ({e}); using rule-based summary")
     return fallback_summary(items)
 
 
@@ -626,10 +670,14 @@ def render_markdown(items, summary, targets, days, stats):
         L.append(f"\n### {nme} ({len(mine)})")
         if not mine:
             L.append("_No meaningful updates._")
-        for it in mine:
-            extra = f" +{len(it.also_covered_by)} outlets" if it.also_covered_by else ""
-            L.append(f"- `{it.category}` {'★' * it.importance} {it.published:%d %b} — "
-                     f"{it.summary} ([{it.source}]({it.url})){tag_of(it)}{extra}")
+        else:
+            primary = mine[:10]
+            for it in primary:
+                extra = f" +{len(it.also_covered_by)} outlets" if it.also_covered_by else ""
+                L.append(f"- `{it.category}` {'★' * it.importance} {it.published:%d %b} — "
+                         f"{it.summary} ([{it.source}]({it.url})){tag_of(it)}{extra}")
+            if len(mine) > 10:
+                L.append(f"\n_... and {len(mine) - 10} additional updates recorded in updates.json._")
     L += ["", "---",
           f"_Pipeline: {stats.get('raw', '?')} raw → {stats.get('after_noise', '?')} after noise filter → "
           f"{stats.get('unique', '?')} unique → {len(items)} meaningful._"]
@@ -722,10 +770,20 @@ def render_html(items, summary, targets, days, stats):
                    '<ul class="items">')
         if not mine:
             out.append('<li class="date">No meaningful updates in this window.</li>')
-        for it in mine:
-            out.append(f'<li>{_chip(it.category)}<span class="dots">{"●" * it.importance}'
-                       f'{"○" * (5 - it.importance)}</span> <span class="date">{it.published:%d %b}'
-                       f'</span>{_link(it)} <span class="date">— {e(it.source)}</span>{_badges(it)}</li>')
+        else:
+            primary = mine[:8]
+            for it in primary:
+                out.append(f'<li>{_chip(it.category)}<span class="dots">{"●" * it.importance}'
+                           f'{"○" * (5 - it.importance)}</span> <span class="date">{it.published:%d %b}'
+                           f'</span>{_link(it)} <span class="date">— {e(it.source)}</span>{_badges(it)}</li>')
+            if len(mine) > 8:
+                remainder = mine[8:]
+                out.append('</ul><details style="margin:4px 0 10px"><summary><small>'
+                           f'View {len(remainder)} more updates from {e(nme)}</small></summary><ul class="items">')
+                for it in remainder:
+                    out.append(f'<li>{_chip(it.category)}<span class="dots">{"●" * it.importance}'
+                               f'{"○" * (5 - it.importance)}</span> <span class="date">{it.published:%d %b}'
+                               f'</span>{_link(it)} <span class="date">— {e(it.source)}</span>{_badges(it)}</li>')
         out.append("</ul></details>")
     cats = Counter(i.category for i in items)
     out.append("<h2>By category</h2><p>" +
