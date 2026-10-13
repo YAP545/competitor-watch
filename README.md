@@ -86,16 +86,23 @@ Output indicators:
 - `WARN`: Page returned very little text (likely client-side JavaScript rendered) or feed returned 0 entries.
 - `FAIL`: URL could not be retrieved or encountered an HTTP error.
 
-### Customizing `sources.json`
-Add or modify target companies, aliases, RSS/Atom feeds, and web pages:
+### Customizing `sources.json` (Adding & Removing Companies)
 
+The application dynamically reads company targets, aliases, RSS/Atom feeds, and watched web pages from `sources.json`. You can add, edit, or remove companies entirely through `sources.json` without modifying any Python code.
+
+- **To add a company**: Add a new top-level key matching the company name.
+- **To remove a company**: Delete or comment out the company key from `sources.json`.
+- **Validation**: Feeds must be HTTP(S) URL strings; pages must include `url` (and optional `label`, `category`, and `ignore_regex`).
+- **Reports adaptation**: All generated briefs (`brief.html`, `brief.md`, `updates.json`) dynamically generate sections and metrics matching only the configured companies.
+
+Example entry:
 ```json
 {
   "Anthropic": {
     "aliases": ["Claude"],
     "feeds": [],
     "pages": [
-      {"url": "https://www.anthropic.com/news", "label": "Newsroom", "category": "other"},
+      {"url": "https://www.anthropic.com/news", "label": "Newsroom", "category": "company_announcement"},
       {"url": "https://claude.com/pricing", "label": "Claude pricing", "category": "pricing"}
     ]
   }

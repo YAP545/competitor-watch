@@ -45,7 +45,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL = os.environ.get("WATCH_MODEL", "claude-sonnet-5-5")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
 CATEGORIES = ["product", "pricing", "hiring", "partnership", "funding_mna",
-              "legal_regulatory", "security_outage", "other"]
+              "legal_regulatory", "security_outage", "model_release", "research",
+              "company_announcement", "other"]
 QUERY_ANGLES = ["", "launch OR release OR announces", "pricing OR plans",
                 "hiring OR layoffs OR appoints", "partnership OR integration"]
 UA = {
@@ -85,10 +86,37 @@ def parse_target(raw: str):
     return parts[0], parts
 
 
+def validate_sources_config(cfg: dict):
+    """Validate structure and fields of loaded sources configuration."""
+    if not isinstance(cfg, dict):
+        raise ValueError("Sources configuration must be a JSON object mapping company names to configs.")
+    for comp, conf in cfg.items():
+        if comp.startswith("_"):
+            continue
+        if not isinstance(conf, dict):
+            raise ValueError(f"Configuration for company '{comp}' must be an object/dict.")
+        aliases = conf.get("aliases", [])
+        if not isinstance(aliases, list) or not all(isinstance(a, str) for a in aliases):
+            raise ValueError(f"Aliases for '{comp}' must be a list of strings.")
+        feeds = conf.get("feeds", [])
+        if not isinstance(feeds, list) or not all(isinstance(u, str) and u.startswith(("http://", "https://")) for u in feeds):
+            raise ValueError(f"Feeds for '{comp}' must be a list of valid HTTP(S) URL strings.")
+        pages = conf.get("pages", [])
+        if not isinstance(pages, list):
+            raise ValueError(f"Pages for '{comp}' must be a list of page objects.")
+        for pg in pages:
+            if not isinstance(pg, dict) or "url" not in pg:
+                raise ValueError(f"Each page entry for '{comp}' must be an object with at least a 'url' key.")
+            if not isinstance(pg["url"], str) or not pg["url"].startswith(("http://", "https://")):
+                raise ValueError(f"Page URL '{pg.get('url')}' in '{comp}' must be a valid HTTP(S) string.")
+
+
 def load_sources(path):
     if path and os.path.exists(path):
         with open(path, encoding="utf-8") as f:
-            return json.load(f)
+            cfg = json.load(f)
+            validate_sources_config(cfg)
+            return cfg
     return {}
 
 
@@ -265,13 +293,16 @@ def watch_pages(targets, cfg, state_dir):
             try:
                 lines = page_lines(http_get(url))
             except Exception as e:
-                print(f"  ! page fetch failed {url}: {e}")
+                err_msg = str(e)
+                if "403" in err_msg:
+                    err_msg += " (Access restricted/Cloudflare: unavailable for automated diff)"
+                print(f"  ! page unavailable {name} / {label} ({url}): {err_msg}")
                 continue
             if pg.get("ignore_regex"):
                 ign = re.compile(pg["ignore_regex"])
                 lines = [l for l in lines if not ign.search(l)]
             if len(lines) < 5:
-                print(f"  ! {url}: almost no text (JS-rendered page?) - skipped")
+                print(f"  ! page unavailable {name} / {label} ({url}): insufficient static content (JS-rendered) - skipped")
                 continue
             path = os.path.join(state_dir, re.sub(r"\W+", "_", name) + "_" +
                                 hashlib.sha1(url.encode()).hexdigest()[:8] + ".txt")
@@ -395,26 +426,47 @@ def owner_company(title, names_by_company, default):
     return best
 
 
+def canonical_url(url: str) -> str:
+    """Normalize URL by stripping tracking parameters, query fragments, and trailing slashes."""
+    if not url:
+        return ""
+    try:
+        p = urlparse(url)
+        # Drop standard UTM and click tracking parameters
+        clean_q = [
+            (k, v) for k, v in [pair.split("=", 1) if "=" in pair else (pair, "")
+                                for pair in p.query.split("&") if pair]
+            if not k.lower().startswith("utm_") and k.lower() not in ("ref", "source", "ocid", "fbclid", "gclid")
+        ]
+        q_str = "&".join(f"{k}={v}" if v else k for k, v in clean_q)
+        netloc = p.netloc.lower()
+        path = p.path.rstrip("/") if len(p.path) > 1 else p.path
+        return f"{p.scheme}://{netloc}{path}{'?' + q_str if q_str else ''}"
+    except Exception:
+        return url
+
+
 def dedupe(items, names_by_company, threshold=0.4):
     items = sorted(items, key=lambda i: i.published)
     brand = {w for ns in names_by_company.values() for n in ns for w in tokens(n)}
-    clusters = []                                          # each: [tokens, canonical_item]
+    clusters = []                                          # each: [tokens, canonical_item, canon_url]
     for it in items:
         t = tokens(it.title)
+        it_c_url = canonical_url(it.url)
         for cl in clusters:
-            canon = cl[1]
+            canon, canon_c_url = cl[1], cl[2]
             j = jaccard(t, cl[0])
             shared = len((t & cl[0]) - brand)
-            if it.url == canon.url or j >= threshold or (shared >= 4 and j >= 0.3):
+            if (it_c_url and canon_c_url and it_c_url == canon_c_url) or it.url == canon.url or j >= threshold or (shared >= 4 and j >= 0.3):
                 if it.official and not canon.official:      # prefer the first-party item
                     it.also_covered_by = [s for s in dict.fromkeys(
                         canon.also_covered_by + [canon.source]) if s != it.source]
-                    cl[0], cl[1] = t, it
+                    cl[0], cl[1], cl[2] = t, it, it_c_url
                 elif it.source != canon.source and it.source not in canon.also_covered_by:
                     canon.also_covered_by.append(it.source)
                 break
         else:
-            clusters.append([t, it])
+            clusters.append([t, it, it_c_url])
     result = [cl[1] for cl in clusters]
     for c in result:
         if c.via != "page-diff":
@@ -477,13 +529,16 @@ def parse_json(text):
 # 4. CLASSIFY + SCORE
 # ----------------------------------------------------------------------------
 RULES = [
-    ("security_outage", r"breach|vulnerab|outage|hack|leak|down for|incident"),
-    ("legal_regulatory", r"lawsuit|sues|sued|antitrust|regulator|probe|fine[sd]?\b|ban(s|ned)?\b|settle|ftc|eu commission|compliance"),
-    ("funding_mna", r"raises|funding|series [a-f]\b|valuation|acquir|acquisition|merger|ipo\b|invests?\b"),
-    ("pricing", r"pric(e|es|ing)\b|subscription|tiers?\b|per (month|seat|million|token)|free (tier|plan)|discount|cheaper|rate limits?|plan (prices?|changes?)"),
-    ("partnership", r"partner|integrat|collaborat|alliance|teams? up|joins forces|deal with"),
-    ("hiring", r"hiring|hires|hired|appoints?|names? .* (ceo|cto|cfo|chief|head)|layoffs?|job cuts|steps down|resign|poach|recruit|headcount"),
-    ("product", r"launch|releases?|unveil|introduc|rolls? out|debut|new (feature|model|version)|\bv\d|open[- ]sources?|beta\b|update"),
+    ("security_outage", r"breach|vulnerab|outage|hack|leak|down for|incident|prompt injection|zero[- ]day|compromis"),
+    ("legal_regulatory", r"lawsuit|sues|sued|antitrust|regulator|probe|fine[sd]?\b|ban(s|ned)?\b|settle|ftc\b|eu commission|compliance|copyright|subpoena|investigat"),
+    ("pricing", r"pric(e|es|ing)\b|subscription|tiers?\b|per (month|seat|million|token)|free (tier|plan)|discount|cheaper|rate limits?|plan (prices?|changes?)|rates? on api"),
+    ("hiring", r"hiring|hires|hired|appoints?|names? .* (ceo|cto|cfo|chief|head|lead)|layoffs?|job cuts|steps down|resign|poach|recruit|headcount|joins as"),
+    ("partnership", r"\b(?:partner|partners|partnership|alliance|teams? up|joins forces|deal with|collaborates? with|collaborating with|collaboration with|commitment with)\b"),
+    ("funding_mna", r"raises|funding|series [a-f]\b|valuation|acquir|acquisition|merger|ipo\b|invests?\b|financing|round led by"),
+    ("research", r"\b(?:published? research|researchers?|arxiv|speculative decoding|dictionary learning|system card|evaluat\w* on|benchmark|safety report|research paper)\b"),
+    ("model_release", r"\b(?:gpt-[345]|gpt-4o|claude|gemini|llama|command r|mistral|voxtral|codestral|pixtral|shieldstral)\b.*(?:model|weights|reasoning|voice|vision|multilingual|capabilities)|\b(?:model|weights|foundation model)\b.*(?:release|launch|unveil|debut)|\b(?:introduces|releases|launches|unveils|announces)\b.*(?:model|reasoning model|foundation model|weights)"),
+    ("product", r"\b(?:launch(?:es|ing)?|releases?|unveil\w*|introduc\w*|rolls? out|debuts?)\b.*(?:feature|search|workspace|product|app|version|console|spaces)|\bnew (?:feature|workspace|product|app|version|console|spaces|search)\b|\b(?:open[- ]sources?|beta\b)"),
+    ("company_announcement", r"\b(?:announc\w*|expands?|expansion|headquarters|office|conference|keynote|devday|summit|letter|statement|policy|milestone)\b"),
 ]
 
 
@@ -494,11 +549,12 @@ def heuristic_classify(it):
         return
     text = it.title.lower()
     for cat, pat in RULES:
-        if re.search(r"\b(?:" + pat + r")", text):
+        if re.search(pat, text, re.I):
             it.category = cat
             break
     base = {"security_outage": 4, "legal_regulatory": 4, "funding_mna": 4, "pricing": 4,
-            "partnership": 3, "hiring": 3, "product": 3, "other": 2}[it.category]
+            "model_release": 4, "product": 3, "partnership": 3, "hiring": 3,
+            "research": 3, "company_announcement": 3, "other": 2}.get(it.category, 2)
     bonus = (1 if len(it.also_covered_by) >= 2 else 0) + (1 if it.official else 0)
     it.importance = min(5, base + bonus)
     it.summary = it.title
@@ -507,8 +563,9 @@ def heuristic_classify(it):
 def llm_classify(items, batch=20):
     system = (
         "You are a competitive-intelligence analyst. For each item decide whether it is a "
-        "MEANINGFUL business update about the named company (product launch/change, pricing, "
-        "hiring/leadership/layoffs, partnership, funding/M&A, legal/regulatory, security/outage). "
+        "MEANINGFUL business update about the named company (model release, product launch/change, pricing, "
+        "research/technical breakthrough, company announcement, hiring/leadership/layoffs, partnership, "
+        "funding/M&A, legal/regulatory, security/outage). "
         "Mark relevant=false for: opinion pieces, stock chatter, listicles, rehashed old news, "
         "passing mentions, or items not actually about that company. Items with official=true are "
         "first-party posts: usually relevant. Items with via='page-diff' are detected changes to a "
@@ -589,6 +646,10 @@ def fallback_summary(items):
                   f"Most active: {top_co} ({n_co}). Most common type: {top_cat.replace('_', ' ')} "
                   f"({n_cat}). Ranked with diversity across competitors.")
         watch_next = []
+        model_items = [i for i in items if i.category == "model_release"]
+        if model_items:
+            cos = ", ".join(dict.fromkeys(i.company for i in model_items[:3]))
+            watch_next.append(f"Evaluate benchmark evals and developer adoption for new models from {cos}.")
         pricing_items = [i for i in items if i.category == "pricing"]
         if pricing_items:
             cos = ", ".join(dict.fromkeys(i.company for i in pricing_items[:3]))
@@ -596,7 +657,11 @@ def fallback_summary(items):
         prod_items = [i for i in items if i.category == "product"]
         if prod_items:
             cos = ", ".join(dict.fromkeys(i.company for i in prod_items[:3]))
-            watch_next.append(f"Track customer feedback and benchmark releases from {cos}.")
+            watch_next.append(f"Track customer feedback and product rollouts from {cos}.")
+        research_items = [i for i in items if i.category == "research"]
+        if research_items and len(watch_next) < 3:
+            cos = ", ".join(dict.fromkeys(i.company for i in research_items[:2]))
+            watch_next.append(f"Review technical papers and safety research published by {cos}.")
         if not watch_next:
             watch_next.append("Track subsequent official announcements and changelogs in the upcoming weekly cycle.")
     else:
@@ -702,7 +767,8 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .chip{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;
  background:color-mix(in srgb,var(--c) 14%,transparent);color:var(--c);margin-right:6px;white-space:nowrap}
 .c-product{--c:#2563eb}.c-pricing{--c:#15803d}.c-hiring{--c:#7c3aed}.c-partnership{--c:#0e7490}
-.c-funding_mna{--c:#b45309}.c-legal_regulatory{--c:#b91c1c}.c-security_outage{--c:#c2410c}.c-other{--c:#6b7280}
+.c-funding_mna{--c:#b45309}.c-legal_regulatory{--c:#b91c1c}.c-security_outage{--c:#c2410c}
+.c-model_release{--c:#4338ca}.c-research{--c:#0891b2}.c-company_announcement{--c:#475569}.c-other{--c:#6b7280}
 .dots{font-size:11px;letter-spacing:1px;color:var(--mute);white-space:nowrap}
 .badge{font-size:11px;border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--mute);margin-left:6px;white-space:nowrap}
 details{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;padding:4px 16px}

@@ -1,0 +1,158 @@
+"""
+Unit and integration tests for Competitor Watch.
+Covers:
+- Configuration validation (valid configs, invalid configs, missing fields)
+- Dynamic company list adaptation in Markdown, HTML, and JSON reports
+- Classification rules (model_release, pricing, research, product, partnership, etc.)
+- Deduplication and canonical URL normalization
+- Baseline creation and subsequent change detection in watch_pages
+"""
+import datetime as dt
+import json
+import os
+import shutil
+import tempfile
+import pytest
+
+from competitor_watch import (
+    Item,
+    validate_sources_config,
+    load_sources,
+    heuristic_classify,
+    dedupe,
+    canonical_url,
+    render_markdown,
+    render_html,
+    rank,
+    fallback_summary,
+    watch_pages,
+)
+
+
+def test_sources_config_valid():
+    cfg = {
+        "Acme AI": {
+            "aliases": ["Acme"],
+            "feeds": ["https://example.com/feed.xml"],
+            "pages": [{"url": "https://example.com/pricing", "label": "Pricing", "category": "pricing"}]
+        }
+    }
+    # Should not raise
+    validate_sources_config(cfg)
+
+
+def test_sources_config_invalid_missing_url():
+    cfg = {
+        "BadCo": {
+            "pages": [{"label": "Pricing"}]  # Missing 'url'
+        }
+    }
+    with pytest.raises(ValueError, match="must be an object with at least a 'url' key"):
+        validate_sources_config(cfg)
+
+
+def test_sources_config_invalid_non_http_feed():
+    cfg = {
+        "BadCo": {
+            "feeds": ["ftp://example.com/rss"]
+        }
+    }
+    with pytest.raises(ValueError, match="must be a list of valid HTTP"):
+        validate_sources_config(cfg)
+
+
+def test_reports_adapt_to_custom_companies():
+    """Verify that adding/removing companies produces clean reports with only those companies."""
+    targets = ["Alpha AI", "Beta Labs"]
+    now = dt.datetime.now(dt.timezone.utc)
+    items = [
+        Item(company="Alpha AI", title="Alpha AI releases v2 model", url="https://alpha.example/1",
+             source="TechNews", published=now, summary="Alpha AI releases v2 model", category="model_release", importance=4),
+        Item(company="Beta Labs", title="Beta Labs lowers subscription prices", url="https://beta.example/1",
+             source="Beta Blog", published=now, summary="Beta Labs lowers subscription prices", category="pricing", importance=4, official=True),
+    ]
+    summary = fallback_summary(items)
+    stats = {"raw": 2, "after_noise": 2, "unique": 2}
+
+    # Markdown check
+    md = render_markdown(items, summary, targets, days=7, stats=stats)
+    assert "### Alpha AI (1)" in md
+    assert "### Beta Labs (1)" in md
+    assert "OpenAI" not in md
+    assert "Anthropic" not in md
+
+    # HTML check
+    html_out = render_html(items, summary, targets, days=7, stats=stats)
+    assert "Alpha AI" in html_out
+    assert "Beta Labs" in html_out
+    assert "OpenAI" not in html_out
+
+    # JSON output
+    data = [i.to_dict() for i in rank(items)]
+    assert len(data) == 2
+    assert {d["company"] for d in data} == {"Alpha AI", "Beta Labs"}
+
+
+def test_classification_rules():
+    now = dt.datetime.now(dt.timezone.utc)
+    cases = [
+        ("Anthropic introduces Claude 3.5 Sonnet with enhanced vision and reasoning", "model_release"),
+        ("OpenAI announces prompt caching discounts for API customers", "pricing"),
+        ("Mistral AI publishes research paper on sparse mixture-of-experts", "research"),
+        ("Cohere launches new developer console workspace", "product"),
+        ("Cohere enters into partnership with AWS for GovCloud deployment", "partnership"),
+        ("OpenAI closes $6.6B funding round at $157B valuation", "funding_mna"),
+        ("ChatGPT incident caused temporary outage for web users", "security_outage"),
+        ("OpenAI expands London headquarters with new research office", "company_announcement"),
+    ]
+    for title, expected_cat in cases:
+        it = Item(company="Test", title=title, url="https://example.com", source="News", published=now)
+        heuristic_classify(it)
+        assert it.category == expected_cat, f"Expected {expected_cat} for '{title}', got {it.category}"
+
+
+def test_deduplication_and_canonical_urls():
+    now = dt.datetime.now(dt.timezone.utc)
+    u1 = "https://example.com/story?utm_source=twitter&utm_medium=social"
+    u2 = "https://example.com/story"
+    assert canonical_url(u1) == canonical_url(u2)
+
+    item1 = Item(company="OpenAI", title="OpenAI announces new reasoning capabilities", url=u1,
+                 source="Reuters", published=now)
+    item2 = Item(company="OpenAI", title="OpenAI announces new reasoning capabilities", url=u2,
+                 source="The Verge", published=now)
+    names_by_company = {"OpenAI": ["OpenAI"]}
+    unique = dedupe([item1, item2], names_by_company)
+    assert len(unique) == 1
+    assert "The Verge" in unique[0].also_covered_by or "Reuters" in unique[0].also_covered_by
+
+
+def test_page_watcher_baseline_and_change_detection():
+    temp_dir = tempfile.mkdtemp()
+    try:
+        targets = ["TestCo"]
+        cfg = {
+            "TestCo": {
+                "pages": [{"url": "https://httpbin.org/status/200", "label": "Status", "category": "product"}]
+            }
+        }
+        # Mock HTML responses
+        html_v1 = "<html><body><p>Feature Alpha</p><p>Feature Beta</p><p>Line 3</p><p>Line 4</p><p>Line 5</p><p>Line 6</p></body></html>"
+        html_v2 = "<html><body><p>Feature Alpha</p><p>Feature Gamma (New!)</p><p>Feature Delta (New!)</p><p>Line 3</p><p>Line 4</p><p>Line 5</p><p>Line 6</p></body></html>"
+
+        from unittest.mock import patch
+
+        # Run 1: baseline created
+        with patch("competitor_watch.http_get", return_value=html_v1):
+            items_run1 = watch_pages(targets, cfg, temp_dir)
+            assert len(items_run1) == 0, "First run must create baseline, not emit items"
+
+        # Run 2: meaningful change detected
+        with patch("competitor_watch.http_get", return_value=html_v2):
+            items_run2 = watch_pages(targets, cfg, temp_dir)
+            assert len(items_run2) == 1, "Second run with new lines must emit page-diff item"
+            assert items_run2[0].via == "page-diff"
+            assert items_run2[0].official is True
+            assert "changed" in items_run2[0].title
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)

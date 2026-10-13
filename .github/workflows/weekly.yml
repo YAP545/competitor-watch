@@ -35,7 +35,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: state
-          key: competitor-watch-state-${{ github.run_id }}
+          key: competitor-watch-state-${{ github.sha }}-${{ github.run_number }}
           restore-keys: |
             competitor-watch-state-
 
