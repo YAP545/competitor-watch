@@ -298,3 +298,32 @@ def test_classification_oct14_other_bucket():
         assert it.category == expected, (
             f"Expected '{expected}' for:\n  '{title}'\n  got '{it.category}'"
         )
+
+
+def test_ambiguous_comparison_and_attribution_boundaries():
+    """Verify word-boundary attribution, retention of 'other' for ambiguous comparisons, and markdown tags."""
+    now = dt.datetime.now(dt.timezone.utc)
+    names_by_company = {"Cohere": ["Cohere"], "OpenAI": ["OpenAI", "ChatGPT"]}
+
+    # 1. Substring in word should not falsely trigger company attribution
+    it_sub = Item("OpenAI", "Coherent thoughts on the future of computing", "https://example.com/1", "News", now)
+    owner_company(it_sub, names_by_company, default="OpenAI")
+    assert it_sub.relevance_label == "company_specific"
+
+    # 2. Genuinely ambiguous comparisons/opinions should stay 'other'
+    ambiguous_titles = [
+        "Meta Muse vs. OpenAI Dots: Which Autonomous AI Agent is Right for You?",
+        "ChatGPT vs. Claude vs. Gemini: Which AI assistant is best in 2026?",
+        "Opinion: Why AI models might fail to live up to the hype",
+        "Editorial: Can we trust tech giants with autonomous agents?",
+    ]
+    for title in ambiguous_titles:
+        it = Item("OpenAI", title, "https://example.com", "News", now)
+        heuristic_classify(it)
+        assert it.category == "other", f"Expected 'other' for ambiguous title: {title}, got {it.category}"
+        assert it.importance <= 2
+
+    # 3. Tag of competitor context in markdown
+    from competitor_watch import tag_of
+    it_ctx = Item("OpenAI", "Meta releases new model", "https://example.com", "News", now, relevance_label="competitor_context")
+    assert "(competitor context)" in tag_of(it_ctx)

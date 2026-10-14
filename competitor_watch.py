@@ -243,7 +243,10 @@ def collect_feeds(targets, cfg):
                 print(f"Official feed: {name} <- {urlparse(url).netloc}: {len(got)} entries")
                 out.extend(got)
             except Exception as e:
-                print(f"  ! feed failed {url}: {e}")
+                err = str(e)
+                if "403" in err:
+                    err += " (Cloudflare/bot protection blocks automated client)"
+                print(f"  ! feed unavailable {name} ({url}): {err}")
     return out
 
 
@@ -439,17 +442,17 @@ def owner_company(item, names_by_company, default):
     target_matches = []
     for comp, names in names_by_company.items():
         for n in names:
-            idx = low.find(n.lower())
-            if idx != -1:
-                target_matches.append((idx, comp, n))
+            m = re.search(r"\b" + re.escape(n.lower()) + r"\b", low)
+            if m:
+                target_matches.append((m.start(), comp, n))
 
     # Check position of external actor mentions
     external_matches = []
     for ext_name, aliases in EXTERNAL_AI_ACTORS.items():
         for a in aliases:
-            idx = low.find(a.lower())
-            if idx != -1:
-                external_matches.append((idx, ext_name, a))
+            m = re.search(r"\b" + re.escape(a.lower()) + r"\b", low)
+            if m:
+                external_matches.append((m.start(), ext_name, a))
 
     target_matches.sort(key=lambda x: x[0])
     external_matches.sort(key=lambda x: x[0])
@@ -672,6 +675,14 @@ def heuristic_classify(it):
         return
     text = (it.title + " " + it.snippet).lower()
     title_low = it.title.lower()
+
+    # Keep genuinely ambiguous comparisons, reviews, and opinion pieces as 'other'
+    if re.search(r"\b(?:which (?:ai|assistant|model|agent) is right|which (?:is|ai) (?:best|better)|head-to-head\b|showdown\b|opinion:\b|editorial:\b)", title_low):
+        it.category = "other"
+        it.importance = 2
+        it.summary = it.title
+        return
+
     for cat, pat in RULES:
         if re.search(pat, title_low, re.I) or re.search(pat, text, re.I):
             it.category = cat
@@ -681,6 +692,8 @@ def heuristic_classify(it):
             "research": 3, "company_announcement": 3, "other": 2}.get(it.category, 2)
     bonus = (1 if len(it.also_covered_by) >= 2 else 0) + (1 if it.official else 0)
     it.importance = min(5, base + bonus)
+    if getattr(it, "relevance_label", "") == "competitor_context":
+        it.importance = min(4, it.importance)
     it.summary = it.title
 
 
@@ -836,8 +849,14 @@ def make_summary(items, use_llm=True):
 # 6. RENDER (Markdown + HTML)
 # ----------------------------------------------------------------------------
 def tag_of(it):
-    return " (official)" if it.official and it.via != "page-diff" else (
-        " (page change)" if it.via == "page-diff" else "")
+    parts = []
+    if it.via == "page-diff":
+        parts.append("(page change)")
+    elif it.official:
+        parts.append("(official)")
+    if getattr(it, "relevance_label", "") == "competitor_context":
+        parts.append("(competitor context)")
+    return (" " + " ".join(parts)) if parts else ""
 
 
 def render_markdown(items, summary, targets, days, stats):
