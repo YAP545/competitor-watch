@@ -237,3 +237,64 @@ def test_classification_expanded_rules():
         assert it.category == expected, (
             f"Expected '{expected}' for title='{title}', got '{it.category}'"
         )
+
+
+def test_classification_oct14_other_bucket():
+    """Titles taken directly from the October 14 'other' bucket — each has a clear correct category."""
+    now = dt.datetime.now(dt.timezone.utc)
+    cases = [
+        # security_outage — charged, rogue, cuts internet access, misbehav, distillation attack
+        ("OpenAI engineer charged after listening device found in meeting room", "security_outage"),
+        ("Anthropic Cuts Live Internet Access for Internal AI Tests After Claude Exploits Injection Flaws", "security_outage"),
+        ("Anthropic Cites New AI Misbehavior, Some on Government Sites", "security_outage"),
+        ("Anthropic says new safeguards sharply reduce AI distillation attacks", "security_outage"),
+        # legal_regulatory — urges court, terms of service, junk debt, scraps agreement
+        ("Anthropic urges court in Washington, D.C. to rehear appeal of Pentagon blacklisting", "legal_regulatory"),
+        ("Anthropic adds a clause to its terms of service prohibiting cruelty against Claude", "legal_regulatory"),
+        ("AI-Powered Bond Rating Startup Says Open AI Debt Is Junk, Anthropic Is Barely Investment Grade", "legal_regulatory"),
+        ("Federal Government Scraps Mistral: AI Framework Agreement with SAP Off the Table for Now", "legal_regulatory"),
+        # pricing — revenue gap/miss, $/M tokens, annualized revenue
+        ("OpenAI annualized revenues $20 billion less than previously signaled: Report", "pricing"),
+        ("Mistral Large 4 API Setup: 13 Steps, $4.18/M Tokens [2026]", "pricing"),
+        ("OpenAI Expects $70 Billion in Annualized Revenue by End of 2026", "pricing"),
+        # hiring — joins team, fired employees, trump alumni
+        ("Sean Gooch joins OpenAI's Go-to-Market Team", "hiring"),
+        ("Anthropic and OpenAI Hire Trump Administration Alumni to Build Relationship with Washington", "hiring"),
+        ("Fired OpenAI employees question the company's commitment to safety", "hiring"),
+        # partnership — joins defense/program
+        ("Hitachi joins Anthropic defense program", "partnership"),
+        ("Hitachi Joins Anthropic's Critical Infrastructure Defense Program", "partnership"),
+        # funding_mna — data center project/sprint/deal, $NB pitch
+        ("Anthropic-linked $366m data center project filed for in Cedar Creek, Texas", "funding_mna"),
+        ("Two Exit Doors: Anthropic's $2 Trillion Pitch Starts Oct. 14. The Public Prospectus Comes Later.", "funding_mna"),
+        ("NTT Data in final talks to build Anthropic's first data centre in Japan", "funding_mna"),
+        ("The Attractive Economics Behind Anthropic Data Center Sprint", "funding_mna"),
+        # research — math proofs, alignment failures, self-replicate
+        ("OpenAI 722 Math Proofs Spark Mathematician Backlash", "research"),
+        ("Anthropic Says Claude Reduced Alignment Failures In Automated Tests", "research"),
+        ("Anthropic warns AI models may soon self-replicate and could wreak havoc on the web", "research"),
+        # model_release — 1 trillion parameters, gpt-rosalind, Claude Opus 6 launch
+        ("Mistral Launches Mistral Large 4 With 1 Trillion Parameters", "model_release"),
+        ("Claude Opus 6 Could Launch Next WEEK and OpenAI Isn't Ready!", "model_release"),
+        ("OpenAI lists new gpt-rosalind-discovery model in docs", "model_release"),
+        # product — canvas, dashboard, for financial services
+        ("Prototyping with canvas in ChatGPT", "product"),
+        ("Anthropic launches Claude Dashboards and Motion for data visualisation", "product"),
+        ("ChatGPT for Financial Services: what's included, delayed and shareable", "product"),
+        # company_announcement — catastrophe planning, cruel-to-Claude policy, critical infrastructure
+        ("OpenAI Is Wargaming Its Response in Case of Public Revolt After Catastrophic AI Disaster", "company_announcement"),
+        ("Anthropic asks users to stop being mean to Claude", "company_announcement"),
+        ("Exclusive: Anthropic's new plan to protect critical infrastructure", "company_announcement"),
+    ]
+    for title, expected in cases:
+        it = Item(
+            company="Test",
+            title=title,
+            url="https://example.com",
+            source="News",
+            published=now,
+        )
+        heuristic_classify(it)
+        assert it.category == expected, (
+            f"Expected '{expected}' for:\n  '{title}'\n  got '{it.category}'"
+        )

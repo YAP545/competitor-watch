@@ -569,16 +569,99 @@ def parse_json(text):
 # 4. CLASSIFY + SCORE
 # ----------------------------------------------------------------------------
 RULES = [
-    ("security_outage", r"breach|vulnerab|outage|hack|leak|down for|incident|prompt injection|zero[- ]day|compromis|listening device|arrested|covert recording|surveillance"),
-    ("legal_regulatory", r"lawsuit|sues|sued|antitrust|regulator|probe|fine[sd]?\b|ban(s|ned)?\b|settle|ftc\b|eu commission|compliance|copyright|subpoena|investigat|rehearing|appeal|blacklisting|pentagon"),
-    ("pricing", r"pric(e|es|ing)\b|subscription|tiers?\b|per (month|seat|million|token)|free (tier|plan)|discount|cheaper|rate limits?|plan (prices?|changes?)|rates? on api|cuts? (?:model )?costs?|halves? (?:model )?costs?|costs? \d+% less"),
-    ("hiring", r"hiring|hires|hired|appoints?|names? .* (ceo|cto|cfo|chief|head|lead)|layoffs?|job cuts|steps down|resign|poach|recruit|headcount|joins as|creates \d+ jobs"),
-    ("partnership", r"\b(?:partner|partners|partnership|alliance|teams? up|joins forces|deal with|collaborates? with|collaborating with|collaboration with|commitment with|signs a pact|brings .* into)\b"),
-    ("funding_mna", r"raises|funding|series [a-f]\b|valuation|acquir|acquisition|merger|ipo\b|invests?\b|financing|round led by|annualized revenues?|plans to spend \$\d+"),
-    ("research", r"\b(?:published? research|researchers?|arxiv|speculative decoding|dictionary learning|system card|evaluat\w* on|benchmark|safety report|research paper|self-replicate|alignment|delusions|watermarks?)\b"),
-    ("model_release", r"\b(?:gpt-[3456]|gpt-4o|claude|gemini|llama|command r|mistral|voxtral|codestral|pixtral|shieldstral|haiku|sonnet|opus|muse)\b.*(?:model|weights|reasoning|voice|vision|multilingual|capabilities|parameters)|\b(?:model|weights|foundation model)\b.*(?:release|launch|unveil|debut)|\b(?:introduces|releases|launches|unveils|announces)\b.*(?:model|reasoning model|foundation model|weights)"),
-    ("product", r"\b(?:launch(?:es|ing)?|releases?|unveil\w*|introduc\w*|rolls? out|debuts?)\b.*(?:feature|search|workspace|product|app|version|console|spaces|assistant)|\bnew (?:feature|workspace|product|app|version|console|spaces|search|assistant)\b|\b(?:open[- ]sources?|beta\b|sidebar integration)"),
-    ("company_announcement", r"\b(?:announc\w*|expands?|expansion|headquarters|office|conference|keynote|devday|summit|letter|statement|policy|milestone|applied ai lab|takes ai video|turns days of work|turns creative ideas)\b"),
+    # ── security / outage ──────────────────────────────────────────────────────
+    ("security_outage", (
+        r"breach|vulnerab|outage|hack|leak|down for|incident|prompt injection|zero[- ]day|compromis"
+        r"|listening device|arrested|charged\b|covert recording|surveillance"
+        r"|goes? rogue|exploit\w*\b.{0,40}(?:site|web|gov|agency)|cuts? (?:off )?(?:live )?internet access"
+        r"|distillation attack|unintended.{0,20}action|misbehav"
+    )),
+    # ── legal / regulatory ─────────────────────────────────────────────────────
+    ("legal_regulatory", (
+        r"lawsuit|sues|sued|antitrust|regulator|probe|fine[sd]?\b|ban(s|ned)?\b|settle|ftc\b"
+        r"|eu commission|compliance|copyright|subpoena|investigat|rehearing|appeal|blacklisting|pentagon"
+        r"|urges? court|scraps?\b.{0,30}(?:ai|agreement|deal)|terms of service|tos\b"
+        r"|junk\b.{0,20}(?:debt|credit)|investment grade"
+    )),
+    # ── pricing ────────────────────────────────────────────────────────────────
+    ("pricing", (
+        r"pric(e|es|ing)\b|subscription|tiers?\b|per (month|seat|million|token)|free (tier|plan)"
+        r"|discount|cheaper|rate limits?|plan (prices?|changes?)|rates? on api"
+        r"|cuts? (?:model )?costs?|halves? (?:model )?costs?|costs? \d+% less"
+        r"|\$[\d.]+\s*/\s*[mk] tokens?|cuts? costs? \d+x|\d+x (?:cheaper|less)"
+        r"|revenue\b.{0,30}(?:gap|miss|confusion|lighter|below|estimate)"
+        r"|annualized revenue|revenue figures?\b"
+    )),
+    # ── hiring / leadership ────────────────────────────────────────────────────
+    ("hiring", (
+        r"hiring|hires|hired|appoints?|names? .* (ceo|cto|cfo|chief|head|lead)"
+        r"|layoffs?|job cuts|steps down|resign|poach|recruit|headcount|joins as|creates \d+ jobs"
+        r"|joins.{0,25}(?:team|go-to-market|safety|research|leadership)"
+        r"|fired\b.{0,30}(?:employee|staff|engineer|lead)|trump.{0,20}alumni"
+    )),
+    # ── partnership / integration ──────────────────────────────────────────────
+    ("partnership", (
+        r"\b(?:partner|partners|partnership|alliance|teams? up|joins forces|deal with"
+        r"|collaborates? with|collaborating with|collaboration with|commitment with"
+        r"|signs a pact|brings .* into)\b"
+        r"|joins.{0,50}(?:program|defense|initiative)"
+        r"|integration with|adds .{0,30} (?:agents?|models?|support)\b"
+    )),
+    # ── funding / M&A ─────────────────────────────────────────────────────────
+    ("funding_mna", (
+        r"raises|funding|series [a-f]\b|valuation|acquir|acquisition|merger|ipo\b"
+        r"|invests?\b|financing|round led by|annualized revenues?|plans to spend \$\d+"
+        r"|data cent(?:er|re).{0,30}(?:project|build|sprint|deal|\$)"
+        r"|build.{0,30}data cent(?:er|re)|final talks.{0,30}(?:build|data|deal)"
+        r"|\$\d+[bm].{0,20}(?:data cent|deal|project|pitch|raise|investment)"
+        r"|\$\d+ (?:trillion|billion|million).{0,20}(?:pitch|deal|raise|investment|project|data)"
+        r"|revenue.{0,20}(?:\$\d+[bm]|\d+ billion)|ipo.{0,15}(?:appetite|prospect|pitch)"
+        r"|spending \$\d+|commits? \$\d+"
+        r"|public prospectus|ipo prospectus"
+    )),
+    # ── research / safety ─────────────────────────────────────────────────────
+    ("research", (
+        r"\b(?:published? research|researchers?|arxiv|speculative decoding|dictionary learning"
+        r"|system card|evaluat\w* on|benchmark|safety report|research paper"
+        r"|self-replicate|alignment|delusions|watermarks?)\b"
+        r"|proofs?\b.{0,30}(?:math|ai|generat)|manuscript|mathematical\b"
+        r"|alignment failure|safety.{0,15}(?:concern|test|eval|measure|guardrail)"
+        r"|consciousness\b|morals?\b.{0,15}ai|ai.{0,15}morals?"
+    )),
+    # ── model release ─────────────────────────────────────────────────────────
+    ("model_release", (
+        r"\b(?:gpt-[3456]|gpt-4o|gpt-rosalind|claude|gemini|llama|command r|mistral|voxtral"
+        r"|codestral|pixtral|shieldstral|haiku|sonnet|opus|muse)\b"
+        r".*\b(?:model|weights|reasoning|voice|vision|multilingual|capabilities|parameters"
+        r"|could launch|set to launch|expected to launch|to debut)\b"
+        r"|\b(?:model|weights|foundation model)\b.*(?:release|launch|unveil|debut)"
+        r"|\b(?:introduces|releases|launches|unveils|announces)\b.*(?:model|reasoning model|foundation model|weights)"
+        r"|\blarge \d+\b.{0,20}(?:parameter|token|context|model|launch|trillion)"
+        r"|\b\d+ trillion parameters?\b"
+        r"|\bopus \d+\b|\bhaiku \d+(?:\.\d+)?\b|\bsonnet \d+(?:\.\d+)?\b"
+    )),
+    # ── product ───────────────────────────────────────────────────────────────
+    ("product", (
+        r"\b(?:launch(?:es|ing)?|releases?|unveil\w*|introduc\w*|rolls? out|debuts?)\b"
+        r".*(?:feature|search|workspace|product|app|version|console|spaces|assistant|dashboard|scanner)"
+        r"|\bnew (?:feature|workspace|product|app|version|console|spaces|search|assistant)\b"
+        r"|\b(?:open[- ]sources?|beta\b|sidebar integration)"
+        r"|dashboard\b|canvas\b.{0,20}(?:chatgpt|claude|ai)|oss scanner"
+        r"|delegate.{0,20}(?:work|task).{0,20}(?:agent|chatgpt|ai)"
+        r"|for (?:teens?|financial services|enterprise).{0,30}(?:chatgpt|claude|ai|tool)"
+        r"|(?:chatgpt|claude|ai).{0,15}for (?:financial services|enterprise|teens?)\b"
+        r"|agentic ai|interactive tools?\b"
+    )),
+    # ── company announcement ──────────────────────────────────────────────────
+    ("company_announcement", (
+        r"\b(?:announc\w*|expands?|expansion|headquarters|office|conference|keynote|devday|summit"
+        r"|letter|statement|policy|milestone|applied ai lab|takes ai video|turns days of work|turns creative ideas)\b"
+        r"|planning for.{0,30}(?:catastroph|crisis|disaster)|catastroph\w+.{0,30}(?:ai|plan|scenario)"
+        r"|cruelty to|cruel.{0,20}(?:claude|ai)|prohibits?.{0,20}(?:cruel|abuse)"
+        r"|mean to (?:claude|ai)\b|asks users to stop|users can.{0,5}t be"
+        r"|new plan.{0,30}(?:protect|critical|infrastructure)|plan to protect"
+        r"|history,.{0,15}controversies?\b"
+    )),
 ]
 
 
