@@ -26,6 +26,8 @@ from competitor_watch import (
     rank,
     fallback_summary,
     watch_pages,
+    owner_company,
+    EXTERNAL_AI_ACTORS,
 )
 
 
@@ -156,3 +158,82 @@ def test_page_watcher_baseline_and_change_detection():
             assert "changed" in items_run2[0].title
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_competitor_context_attribution():
+    """Meta/Google stories leading with an external actor get relevance_label='competitor_context'."""
+    now = dt.datetime.now(dt.timezone.utc)
+    names_by_company = {"OpenAI": ["OpenAI", "ChatGPT"], "Anthropic": ["Anthropic", "Claude"]}
+
+    # External actor (Meta) appears before the monitored target → competitor_context
+    it_meta = Item(
+        company="OpenAI",
+        title="Meta releases Muse Wonder to challenge OpenAI and Anthropic",
+        url="https://example.com/1",
+        source="TechCrunch",
+        published=now,
+    )
+    assigned = owner_company(it_meta, names_by_company, "OpenAI")
+    assert it_meta.relevance_label == "competitor_context", (
+        f"Expected competitor_context, got {it_meta.relevance_label}"
+    )
+    assert assigned in ("OpenAI", "Anthropic"), f"Unexpected assigned company: {assigned}"
+
+    # Monitored company (OpenAI) leads the story → company_specific
+    it_oai = Item(
+        company="OpenAI",
+        title="OpenAI launches GPT-6 with 1 trillion parameters",
+        url="https://example.com/2",
+        source="Reuters",
+        published=now,
+    )
+    owner_company(it_oai, names_by_company, "OpenAI")
+    assert it_oai.relevance_label == "company_specific", (
+        f"Expected company_specific, got {it_oai.relevance_label}"
+    )
+
+    # Monitored company leads before an external name → still company_specific
+    it_claude = Item(
+        company="Anthropic",
+        title="Claude 4 beats Gemini Ultra on all major benchmarks",
+        url="https://example.com/3",
+        source="VentureBeat",
+        published=now,
+    )
+    owner_company(it_claude, names_by_company, "Anthropic")
+    assert it_claude.relevance_label == "company_specific", (
+        f"Expected company_specific when monitored target leads, got {it_claude.relevance_label}"
+    )
+
+
+def test_classification_expanded_rules():
+    """Titles that were 'other' in the October 14 report should now classify correctly."""
+    now = dt.datetime.now(dt.timezone.utc)
+    cases = [
+        # pricing: cost-reduction language added to RULES
+        ("Anthropic launches Haiku 5.5, says it costs 75% less to run", "pricing"),
+        # security_outage: employee arrested → surveillance pattern
+        ("OpenAI employee arrested over hidden listening device, company says", "security_outage"),
+        # funding_mna: large planned spend
+        ("Anthropic Plans to Spend $518 Billion on Cloud and Computing Power", "funding_mna"),
+        # legal_regulatory: court rehearing
+        ("Anthropic seeks rehearing of case over Pentagon's security risk branding", "legal_regulatory"),
+        # hiring: creates N jobs
+        ("OpenAI Creates 200 jobs, new Applied AI Lab in Dublin", "hiring"),
+        # research: self-replication study
+        ("AI could self-replicate on home devices within months, Anthropic says", "research"),
+        # product: sidebar integration
+        ("Claude in Google Docs sidebar integration launches to all users", "product"),
+    ]
+    for title, expected in cases:
+        it = Item(
+            company="Test",
+            title=title,
+            url="https://example.com",
+            source="News",
+            published=now,
+        )
+        heuristic_classify(it)
+        assert it.category == expected, (
+            f"Expected '{expected}' for title='{title}', got '{it.category}'"
+        )

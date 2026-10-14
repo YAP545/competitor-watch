@@ -40,3 +40,6 @@ desktop.ini
 .vscode/
 .idea/
 *.swp
+
+# Downloaded GitHub Actions artifacts (local analysis only)
+gh_artifacts/

@@ -74,6 +74,7 @@ class Item:
     official: bool = False         # first-party (company feed / watched page)
     via: str = "news"              # news | company-feed | page-diff
     also_covered_by: list = field(default_factory=list)
+    relevance_label: str = "company_specific"  # company_specific | competitor_context
 
     def to_dict(self):
         d = asdict(self)
@@ -416,14 +417,53 @@ def jaccard(a, b):
     return len(a & b) / len(a | b) if a and b else 0.0
 
 
-def owner_company(title, names_by_company, default):
-    low, best, pos = title.lower(), default, 10 ** 9
+EXTERNAL_AI_ACTORS = {
+    "Meta": ["Meta", "Llama", "Zuckerberg", "Muse"],
+    "Google": ["Google", "Gemini", "DeepMind", "Sundar"],
+    "Microsoft": ["Microsoft", "Copilot", "Nadella"],
+    "Apple": ["Apple", "Apple Intelligence"],
+    "Amazon": ["Amazon", "AWS", "Bedrock"],
+    "xAI": ["xAI", "Grok", "Elon Musk"],
+}
+
+
+def owner_company(item, names_by_company, default):
+    """Determine the true primary subject of a story.
+    If the primary subject is an external actor (e.g. Meta, Google, xAI) that merely
+    compares against or challenges a monitored target, label it as competitor_context.
+    """
+    title = item.title
+    low = title.lower()
+
+    # Check position of monitored target mentions
+    target_matches = []
     for comp, names in names_by_company.items():
         for n in names:
-            i = low.find(n.lower())
-            if 0 <= i < pos:
-                best, pos = comp, i
-    return best
+            idx = low.find(n.lower())
+            if idx != -1:
+                target_matches.append((idx, comp, n))
+
+    # Check position of external actor mentions
+    external_matches = []
+    for ext_name, aliases in EXTERNAL_AI_ACTORS.items():
+        for a in aliases:
+            idx = low.find(a.lower())
+            if idx != -1:
+                external_matches.append((idx, ext_name, a))
+
+    target_matches.sort(key=lambda x: x[0])
+    external_matches.sort(key=lambda x: x[0])
+
+    # If an external actor is the opening subject / leading subject before the monitored target
+    # (e.g. "Meta releases Muse to challenge OpenAI" or "Google launches Gemini 4 undercutting Anthropic")
+    if external_matches and (not target_matches or external_matches[0][0] < target_matches[0][0]):
+        item.relevance_label = "competitor_context"
+        # Keep under target if relevant comparison, but ensure relevance_label is clear
+        best_target = target_matches[0][1] if target_matches else default
+        return best_target
+
+    item.relevance_label = "company_specific"
+    return target_matches[0][1] if target_matches else default
 
 
 def canonical_url(url: str) -> str:
@@ -470,7 +510,7 @@ def dedupe(items, names_by_company, threshold=0.4):
     result = [cl[1] for cl in clusters]
     for c in result:
         if c.via != "page-diff":
-            c.company = owner_company(c.title, names_by_company, c.company)
+            c.company = owner_company(c, names_by_company, c.company)
     print(f"Dedupe: {len(items)} -> {len(result)} unique stories")
     return result
 
@@ -529,16 +569,16 @@ def parse_json(text):
 # 4. CLASSIFY + SCORE
 # ----------------------------------------------------------------------------
 RULES = [
-    ("security_outage", r"breach|vulnerab|outage|hack|leak|down for|incident|prompt injection|zero[- ]day|compromis"),
-    ("legal_regulatory", r"lawsuit|sues|sued|antitrust|regulator|probe|fine[sd]?\b|ban(s|ned)?\b|settle|ftc\b|eu commission|compliance|copyright|subpoena|investigat"),
-    ("pricing", r"pric(e|es|ing)\b|subscription|tiers?\b|per (month|seat|million|token)|free (tier|plan)|discount|cheaper|rate limits?|plan (prices?|changes?)|rates? on api"),
-    ("hiring", r"hiring|hires|hired|appoints?|names? .* (ceo|cto|cfo|chief|head|lead)|layoffs?|job cuts|steps down|resign|poach|recruit|headcount|joins as"),
-    ("partnership", r"\b(?:partner|partners|partnership|alliance|teams? up|joins forces|deal with|collaborates? with|collaborating with|collaboration with|commitment with)\b"),
-    ("funding_mna", r"raises|funding|series [a-f]\b|valuation|acquir|acquisition|merger|ipo\b|invests?\b|financing|round led by"),
-    ("research", r"\b(?:published? research|researchers?|arxiv|speculative decoding|dictionary learning|system card|evaluat\w* on|benchmark|safety report|research paper)\b"),
-    ("model_release", r"\b(?:gpt-[345]|gpt-4o|claude|gemini|llama|command r|mistral|voxtral|codestral|pixtral|shieldstral)\b.*(?:model|weights|reasoning|voice|vision|multilingual|capabilities)|\b(?:model|weights|foundation model)\b.*(?:release|launch|unveil|debut)|\b(?:introduces|releases|launches|unveils|announces)\b.*(?:model|reasoning model|foundation model|weights)"),
-    ("product", r"\b(?:launch(?:es|ing)?|releases?|unveil\w*|introduc\w*|rolls? out|debuts?)\b.*(?:feature|search|workspace|product|app|version|console|spaces)|\bnew (?:feature|workspace|product|app|version|console|spaces|search)\b|\b(?:open[- ]sources?|beta\b)"),
-    ("company_announcement", r"\b(?:announc\w*|expands?|expansion|headquarters|office|conference|keynote|devday|summit|letter|statement|policy|milestone)\b"),
+    ("security_outage", r"breach|vulnerab|outage|hack|leak|down for|incident|prompt injection|zero[- ]day|compromis|listening device|arrested|covert recording|surveillance"),
+    ("legal_regulatory", r"lawsuit|sues|sued|antitrust|regulator|probe|fine[sd]?\b|ban(s|ned)?\b|settle|ftc\b|eu commission|compliance|copyright|subpoena|investigat|rehearing|appeal|blacklisting|pentagon"),
+    ("pricing", r"pric(e|es|ing)\b|subscription|tiers?\b|per (month|seat|million|token)|free (tier|plan)|discount|cheaper|rate limits?|plan (prices?|changes?)|rates? on api|cuts? (?:model )?costs?|halves? (?:model )?costs?|costs? \d+% less"),
+    ("hiring", r"hiring|hires|hired|appoints?|names? .* (ceo|cto|cfo|chief|head|lead)|layoffs?|job cuts|steps down|resign|poach|recruit|headcount|joins as|creates \d+ jobs"),
+    ("partnership", r"\b(?:partner|partners|partnership|alliance|teams? up|joins forces|deal with|collaborates? with|collaborating with|collaboration with|commitment with|signs a pact|brings .* into)\b"),
+    ("funding_mna", r"raises|funding|series [a-f]\b|valuation|acquir|acquisition|merger|ipo\b|invests?\b|financing|round led by|annualized revenues?|plans to spend \$\d+"),
+    ("research", r"\b(?:published? research|researchers?|arxiv|speculative decoding|dictionary learning|system card|evaluat\w* on|benchmark|safety report|research paper|self-replicate|alignment|delusions|watermarks?)\b"),
+    ("model_release", r"\b(?:gpt-[3456]|gpt-4o|claude|gemini|llama|command r|mistral|voxtral|codestral|pixtral|shieldstral|haiku|sonnet|opus|muse)\b.*(?:model|weights|reasoning|voice|vision|multilingual|capabilities|parameters)|\b(?:model|weights|foundation model)\b.*(?:release|launch|unveil|debut)|\b(?:introduces|releases|launches|unveils|announces)\b.*(?:model|reasoning model|foundation model|weights)"),
+    ("product", r"\b(?:launch(?:es|ing)?|releases?|unveil\w*|introduc\w*|rolls? out|debuts?)\b.*(?:feature|search|workspace|product|app|version|console|spaces|assistant)|\bnew (?:feature|workspace|product|app|version|console|spaces|search|assistant)\b|\b(?:open[- ]sources?|beta\b|sidebar integration)"),
+    ("company_announcement", r"\b(?:announc\w*|expands?|expansion|headquarters|office|conference|keynote|devday|summit|letter|statement|policy|milestone|applied ai lab|takes ai video|turns days of work|turns creative ideas)\b"),
 ]
 
 
@@ -547,9 +587,10 @@ def heuristic_classify(it):
         it.importance = max(it.importance, 3)
         it.summary = it.title
         return
-    text = it.title.lower()
+    text = (it.title + " " + it.snippet).lower()
+    title_low = it.title.lower()
     for cat, pat in RULES:
-        if re.search(pat, text, re.I):
+        if re.search(pat, title_low, re.I) or re.search(pat, text, re.I):
             it.category = cat
             break
     base = {"security_outage": 4, "legal_regulatory": 4, "funding_mna": 4, "pricing": 4,
@@ -771,6 +812,7 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .c-model_release{--c:#4338ca}.c-research{--c:#0891b2}.c-company_announcement{--c:#475569}.c-other{--c:#6b7280}
 .dots{font-size:11px;letter-spacing:1px;color:var(--mute);white-space:nowrap}
 .badge{font-size:11px;border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--mute);margin-left:6px;white-space:nowrap}
+.b-ctx{color:#9333ea;border-color:#9333ea40}
 details{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;padding:4px 16px}
 summary{cursor:pointer;font-weight:600;padding:10px 0}summary small{color:var(--mute);font-weight:400;margin-left:8px}
 ul.items{list-style:none;margin:0 0 10px;padding:0}ul.items li{padding:9px 0;border-top:1px solid var(--line)}
@@ -790,6 +832,8 @@ def _badges(it):
         b += '<span class="badge">page change</span>'
     elif it.official:
         b += '<span class="badge">official</span>'
+    if getattr(it, "relevance_label", "") == "competitor_context":
+        b += '<span class="badge b-ctx">competitor context</span>'
     if it.also_covered_by:
         b += f'<span class="badge">+{len(it.also_covered_by)} outlets</span>'
     return b
